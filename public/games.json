@@ -1,0 +1,39 @@
+[
+  {
+    "id": "LOSTARK",
+    "names": {
+      "en": "Lost Ark",
+      "ko": "로스트아크",
+      "ja": "ロストアーク"
+    },
+    "category": "MMORPG",
+    "defaultLanguage": "ko",
+    "createdAt": "2025-01-15T00:00:00.000Z",
+    "updatedAt": "2025-08-22T07:28:59.390Z",
+    "description": ""
+  },
+  {
+    "id": "EPICSEVEN",
+    "names": {
+      "en": "Epic Seven",
+      "ko": "에픽세븐",
+      "ja": "エピックセブン"
+    },
+    "category": "RPG",
+    "defaultLanguage": "ko",
+    "createdAt": "2025-01-16T00:00:00.000Z",
+    "updatedAt": "2025-01-16T00:00:00.000Z"
+  },
+  {
+    "id": "CROSSFIRE",
+    "names": {
+      "en": "Crossfire",
+      "ko": "크로스파이어",
+      "ja": "クロスファイア"
+    },
+    "category": "Action",
+    "defaultLanguage": "ja",
+    "createdAt": "2025-01-17T00:00:00.000Z",
+    "updatedAt": "2025-01-17T00:00:00.000Z"
+  }
+]

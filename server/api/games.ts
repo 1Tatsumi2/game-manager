@@ -2,6 +2,9 @@ import { promises as fs } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
+// In-memory store for production environment
+let memoryStore: any[] | null = null;
+
 // Try several paths because Vercel / Nitro build output can change the runtime cwd
 const fallbackPaths = (() => {
   const fromCwd = (p: string) => path.join(process.cwd(), p);
@@ -18,19 +21,37 @@ const fallbackPaths = (() => {
   return [
     fromCwd("data/games.json"),
     fromCwd("public/data/games.json"),
+    fromCwd("public/games.json"),
     fromCwd(".output/server/data/games.json"),
     fromCwd(".output/public/data/games.json"),
+    fromCwd(".output/public/games.json"),
     fromThisFile(),
+    // Additional Vercel-specific paths
+    "/var/task/public/data/games.json",
+    "/var/task/public/games.json",
+    "/tmp/games.json",
   ];
 })();
 
 // Utility function to read games from file or bundled JSON. Returns [] on failure.
 async function readGames() {
+  // In production, use memory store if available
+  if (process.env.NODE_ENV === "production" && memoryStore !== null) {
+    return memoryStore;
+  }
+
   // Try fs read on multiple candidate locations
   for (const p of fallbackPaths) {
     try {
       const data = await fs.readFile(p, "utf-8");
-      return JSON.parse(data);
+      const games = JSON.parse(data);
+
+      // Initialize memory store in production
+      if (process.env.NODE_ENV === "production" && memoryStore === null) {
+        memoryStore = [...games];
+      }
+
+      return games;
     } catch (e) {
       // ignore and try next
     }
@@ -44,37 +65,48 @@ async function readGames() {
     const mod = await import("../../data/games.json", {
       assert: { type: "json" },
     });
-    return (mod && (mod.default || mod)) || [];
+    const games = (mod && (mod.default || mod)) || [];
+
+    // Initialize memory store in production
+    if (process.env.NODE_ENV === "production" && memoryStore === null) {
+      memoryStore = [...games];
+    }
+
+    return games;
   } catch (err) {
     console.error("Error reading games file (all attempts failed):", err);
+
+    // Return empty array or memory store as fallback
+    if (process.env.NODE_ENV === "production" && memoryStore !== null) {
+      return memoryStore;
+    }
+
     return [];
   }
 }
 
 // Utility function to write games to file
 async function writeGames(games: any[]) {
-  // In serverless/production environments (like Vercel), writing to the source
-  // files is not allowed (filesystem is read-only or ephemeral). Refuse writes
-  // in production and suggest using a real database.
+  // In production, update memory store
   if (process.env.NODE_ENV === "production") {
-    throw createError({
-      statusCode: 403,
-      statusMessage:
-        "Writes are disabled in production. Use a database for persistent writes.",
-    });
+    memoryStore = [...games];
+    console.log("Updated in-memory store with", games.length, "games");
+    return;
   }
 
   // In development, try to write to the most likely location
   for (const p of fallbackPaths) {
     try {
       await fs.writeFile(p, JSON.stringify(games, null, 2));
+      console.log(`Successfully wrote games to: ${p}`);
       return;
-    } catch (e) {
+    } catch (e: any) {
+      console.log(`Failed to write to ${p}:`, e?.message || e);
       // ignore and try next
     }
   }
 
-  // If all attempts failed, throw
+  // If all attempts failed in development, throw
   throw new Error("Unable to write games file to disk");
 }
 
@@ -143,14 +175,27 @@ export default defineEventHandler(async (event) => {
       const body = await readBody(event);
       const games = await readGames();
 
-      // Generate new ID
-      const newId = (
-        Math.max(...games.map((g: any) => parseInt(g.id)), 0) + 1
-      ).toString();
+      // Generate new ID - handle case when games array is empty
+      let newId: string;
+      if (games.length === 0) {
+        newId = "1";
+      } else {
+        // Try to find numeric IDs, fallback to timestamp-based ID
+        const numericIds = games
+          .map((g: any) => parseInt(g.id))
+          .filter((id: number) => !isNaN(id));
+
+        if (numericIds.length > 0) {
+          newId = (Math.max(...numericIds) + 1).toString();
+        } else {
+          // If no numeric IDs found, use the body.id or generate timestamp-based ID
+          newId = body.id || `GAME_${Date.now()}`;
+        }
+      }
 
       const newGame = {
-        id: newId,
         ...body,
+        id: body.id || newId, // Use provided ID or generated ID
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };

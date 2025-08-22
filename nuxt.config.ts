@@ -7,4 +7,13 @@ export default defineNuxtConfig({
   build: {
     transpile: ["primevue"],
   },
+  nitro: {
+    // Ensure data folder is available in production
+    publicAssets: [
+      {
+        baseURL: "/data",
+        dir: "data",
+      },
+    ],
+  },
 });
