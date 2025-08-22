@@ -197,7 +197,7 @@ const categoryOptions = ref([
 const loadCategories = async () => {
   try {
     const response = await $fetch("/api/categories");
-    
+
     // Check if response has the expected structure
     if (response && response.categories && Array.isArray(response.categories)) {
       const apiCategories = response.categories.map((cat) => ({

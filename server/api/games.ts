@@ -1,27 +1,81 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
-const filePath = path.join(process.cwd(), "data", "games.json");
+// Try several paths because Vercel / Nitro build output can change the runtime cwd
+const fallbackPaths = (() => {
+  const fromCwd = (p: string) => path.join(process.cwd(), p);
+  const fromThisFile = () =>
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "data",
+      "games.json"
+    );
 
-// Utility function to read games from file
+  return [
+    fromCwd("data/games.json"),
+    fromCwd("public/data/games.json"),
+    fromCwd(".output/server/data/games.json"),
+    fromCwd(".output/public/data/games.json"),
+    fromThisFile(),
+  ];
+})();
+
+// Utility function to read games from file or bundled JSON. Returns [] on failure.
 async function readGames() {
+  // Try fs read on multiple candidate locations
+  for (const p of fallbackPaths) {
+    try {
+      const data = await fs.readFile(p, "utf-8");
+      return JSON.parse(data);
+    } catch (e) {
+      // ignore and try next
+    }
+  }
+
+  // Last resort: try dynamic import of the JSON (bundled by build)
   try {
-    const data = await fs.readFile(filePath, "utf-8");
-    return JSON.parse(data);
-  } catch (error) {
-    console.error("Error reading games file:", error);
+    // relative import from this file to the data folder
+    // use a dynamic import so bundlers can include the asset
+    // @ts-ignore - Node supports JSON imports in newer versions/bundlers
+    const mod = await import("../../data/games.json", {
+      assert: { type: "json" },
+    });
+    return (mod && (mod.default || mod)) || [];
+  } catch (err) {
+    console.error("Error reading games file (all attempts failed):", err);
     return [];
   }
 }
 
 // Utility function to write games to file
 async function writeGames(games: any[]) {
-  try {
-    await fs.writeFile(filePath, JSON.stringify(games, null, 2));
-  } catch (error) {
-    console.error("Error writing games file:", error);
-    throw error;
+  // In serverless/production environments (like Vercel), writing to the source
+  // files is not allowed (filesystem is read-only or ephemeral). Refuse writes
+  // in production and suggest using a real database.
+  if (process.env.NODE_ENV === "production") {
+    throw createError({
+      statusCode: 403,
+      statusMessage:
+        "Writes are disabled in production. Use a database for persistent writes.",
+    });
   }
+
+  // In development, try to write to the most likely location
+  for (const p of fallbackPaths) {
+    try {
+      await fs.writeFile(p, JSON.stringify(games, null, 2));
+      return;
+    } catch (e) {
+      // ignore and try next
+    }
+  }
+
+  // If all attempts failed, throw
+  throw new Error("Unable to write games file to disk");
 }
 
 export default defineEventHandler(async (event) => {
