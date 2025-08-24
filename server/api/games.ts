@@ -35,7 +35,17 @@ const fallbackPaths = (() => {
 
 // Utility function to read games from file or bundled JSON. Returns [] on failure.
 async function readGames() {
-  // First, try dynamic import of the bundled JSON (most reliable on Vercel)
+  // In production, ALWAYS use memory store if available (preserves CRUD operations)
+  if (process.env.NODE_ENV === "production" && memoryStore !== null) {
+    console.log(
+      "Using memory store (production):",
+      memoryStore.length,
+      "games"
+    );
+    return memoryStore;
+  }
+
+  // Try dynamic import of the bundled JSON (most reliable on Vercel)
   try {
     // @ts-ignore - Node supports JSON imports in newer versions/bundlers
     const mod = await import("../../data/games.json", {
@@ -49,16 +59,20 @@ async function readGames() {
       "games"
     );
 
-    // In production, merge with memory store if it has additional games
+    // In production, ALWAYS use memory store if available (preserves CRUD operations)
     if (process.env.NODE_ENV === "production") {
-      if (memoryStore !== null && memoryStore.length > gamesFromBundle.length) {
-        console.log("Using memory store (has more games):", memoryStore.length);
+      if (memoryStore !== null) {
+        console.log(
+          "Using memory store (production):",
+          memoryStore.length,
+          "games"
+        );
         return memoryStore;
       } else {
-        // Initialize/update memory store with bundled data
+        // Initialize memory store with bundled data
         memoryStore = [...gamesFromBundle];
         console.log("Initialized memory store from bundle");
-        return gamesFromBundle;
+        return memoryStore;
       }
     }
 
