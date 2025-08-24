@@ -35,13 +35,16 @@ const fallbackPaths = (() => {
 
 // Utility function to read games from file or bundled JSON. Returns [] on failure.
 async function readGames() {
-  // In production, ALWAYS use memory store if available (preserves CRUD operations)
+  console.log(
+    "readGames() called, NODE_ENV:",
+    process.env.NODE_ENV,
+    "memoryStore length:",
+    memoryStore?.length || 0
+  );
+
+  // In production, use memory store if available (preserves CRUD operations)
   if (process.env.NODE_ENV === "production" && memoryStore !== null) {
-    console.log(
-      "Using memory store (production):",
-      memoryStore.length,
-      "games"
-    );
+    console.log("Using existing memory store:", memoryStore.length, "games");
     return memoryStore;
   }
 
@@ -59,23 +62,16 @@ async function readGames() {
       "games"
     );
 
-    // In production, ALWAYS use memory store if available (preserves CRUD operations)
+    // In production, initialize memory store with bundled data if not exists
     if (process.env.NODE_ENV === "production") {
-      if (memoryStore !== null) {
-        console.log(
-          "Using memory store (production):",
-          memoryStore.length,
-          "games"
-        );
-        return memoryStore;
-      } else {
-        // Initialize memory store with bundled data
+      if (memoryStore === null) {
         memoryStore = [...gamesFromBundle];
-        console.log("Initialized memory store from bundle");
-        return memoryStore;
+        console.log("Initialized memory store from bundled JSON");
       }
+      return memoryStore;
     }
 
+    // In development, return bundled data directly
     return gamesFromBundle;
   } catch (bundleErr) {
     console.error("Failed to import bundled JSON:", bundleErr);
@@ -127,10 +123,21 @@ async function readGames() {
 
 // Utility function to write games to file
 async function writeGames(games: any[]) {
+  console.log(
+    "writeGames() called with",
+    games.length,
+    "games, NODE_ENV:",
+    process.env.NODE_ENV
+  );
+
   // In production, update memory store
   if (process.env.NODE_ENV === "production") {
     memoryStore = [...games];
     console.log("Updated in-memory store with", games.length, "games");
+    console.log(
+      "Memory store game IDs:",
+      memoryStore.map((g: any) => g.id)
+    );
     return;
   }
 
@@ -222,12 +229,19 @@ export default defineEventHandler(async (event) => {
     // POST - Create new game
     if (method === "POST") {
       const body = await readBody(event);
+      console.log("POST - Creating new game:", body.id || "no ID provided");
+
       const games = await readGames();
+      console.log(
+        "POST - Current games before create:",
+        games.map((g: any) => g.id)
+      );
 
       // Generate new ID - handle case when games array is empty
       let newId: string;
       if (games.length === 0) {
         newId = "1";
+        console.log("POST - Using ID '1' for first game");
       } else {
         // Try to find numeric IDs, fallback to timestamp-based ID
         const numericIds = games
@@ -236,15 +250,28 @@ export default defineEventHandler(async (event) => {
 
         if (numericIds.length > 0) {
           newId = (Math.max(...numericIds) + 1).toString();
+          console.log("POST - Generated numeric ID:", newId);
         } else {
           // If no numeric IDs found, use the body.id or generate timestamp-based ID
           newId = body.id || `GAME_${Date.now()}`;
+          console.log("POST - Using custom/timestamp ID:", newId);
         }
+      }
+
+      const finalId = body.id || newId;
+      console.log("POST - Final game ID:", finalId);
+
+      // Check for duplicate ID
+      if (games.find((g: any) => g.id === finalId)) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: `Game with ID '${finalId}' already exists`,
+        });
       }
 
       const newGame = {
         ...body,
-        id: body.id || newId, // Use provided ID or generated ID
+        id: finalId,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -252,16 +279,24 @@ export default defineEventHandler(async (event) => {
       games.push(newGame);
       await writeGames(games);
 
+      console.log("POST - Game created successfully:", finalId);
       return { success: true, game: newGame };
     }
 
     // PUT - Update existing game
     if (method === "PUT") {
       const body = await readBody(event);
+      console.log("PUT - Updating game:", body.id);
+
       const games = await readGames();
+      console.log(
+        "PUT - Current games before update:",
+        games.map((g: any) => g.id)
+      );
 
       const gameIndex = games.findIndex((g: any) => g.id === body.id);
       if (gameIndex === -1) {
+        console.error("PUT - Game not found:", body.id);
         throw createError({
           statusCode: 404,
           statusMessage: "Game not found",
@@ -276,32 +311,50 @@ export default defineEventHandler(async (event) => {
 
       await writeGames(games);
 
+      console.log("PUT - Game updated successfully:", body.id);
       return { success: true, game: games[gameIndex] };
     }
 
     // DELETE - Delete game(s)
     if (method === "DELETE") {
       const body = await readBody(event);
+      console.log("DELETE - Request:", body);
+
       const games = await readGames();
+      console.log(
+        "DELETE - Current games before delete:",
+        games.map((g: any) => g.id)
+      );
 
       if (body.ids && Array.isArray(body.ids)) {
         // Bulk delete
+        console.log("DELETE - Bulk delete IDs:", body.ids);
         const updatedGames = games.filter((g: any) => !body.ids.includes(g.id));
         await writeGames(updatedGames);
+        console.log(
+          "DELETE - Bulk delete completed, remaining games:",
+          updatedGames.map((g: any) => g.id)
+        );
         return {
           success: true,
           deletedCount: games.length - updatedGames.length,
         };
       } else if (body.id) {
         // Single delete
+        console.log("DELETE - Single delete ID:", body.id);
         const updatedGames = games.filter((g: any) => g.id !== body.id);
         if (updatedGames.length === games.length) {
+          console.error("DELETE - Game not found:", body.id);
           throw createError({
             statusCode: 404,
             statusMessage: "Game not found",
           });
         }
         await writeGames(updatedGames);
+        console.log(
+          "DELETE - Single delete completed, remaining games:",
+          updatedGames.map((g: any) => g.id)
+        );
         return { success: true, deletedCount: 1 };
       } else {
         throw createError({
