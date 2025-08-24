@@ -35,5 +35,17 @@
     "defaultLanguage": "ja",
     "createdAt": "2025-01-17T00:00:00.000Z",
     "updatedAt": "2025-01-17T00:00:00.000Z"
+  },
+  {
+    "id": "ZINGME",
+    "category": "Strategy",
+    "names": {
+      "en": "Zing Me Skibidi",
+      "ko": "나를 울리다"
+    },
+    "defaultLanguage": "en",
+    "description": "",
+    "createdAt": "2025-08-24T07:05:37.086Z",
+    "updatedAt": "2025-08-24T07:06:07.493Z"
   }
 ]

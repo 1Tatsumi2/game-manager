@@ -35,16 +35,60 @@ const fallbackPaths = (() => {
 
 // Utility function to read games from file or bundled JSON. Returns [] on failure.
 async function readGames() {
-  // In production, use memory store if available
+  // First, try dynamic import of the bundled JSON (most reliable on Vercel)
+  try {
+    // @ts-ignore - Node supports JSON imports in newer versions/bundlers
+    const mod = await import("../../data/games.json", {
+      assert: { type: "json" },
+    });
+    const gamesFromBundle = (mod && (mod.default || mod)) || [];
+
+    console.log(
+      "Successfully loaded games from bundled JSON:",
+      gamesFromBundle.length,
+      "games"
+    );
+
+    // In production, merge with memory store if it has additional games
+    if (process.env.NODE_ENV === "production") {
+      if (memoryStore !== null && memoryStore.length > gamesFromBundle.length) {
+        console.log("Using memory store (has more games):", memoryStore.length);
+        return memoryStore;
+      } else {
+        // Initialize/update memory store with bundled data
+        memoryStore = [...gamesFromBundle];
+        console.log("Initialized memory store from bundle");
+        return gamesFromBundle;
+      }
+    }
+
+    return gamesFromBundle;
+  } catch (bundleErr) {
+    console.error("Failed to import bundled JSON:", bundleErr);
+  }
+
+  // Fallback: In production, use memory store if available
   if (process.env.NODE_ENV === "production" && memoryStore !== null) {
+    console.log(
+      "Using existing memory store as fallback:",
+      memoryStore.length,
+      "games"
+    );
     return memoryStore;
   }
 
-  // Try fs read on multiple candidate locations
+  // Try fs read on multiple candidate locations (development)
   for (const p of fallbackPaths) {
     try {
       const data = await fs.readFile(p, "utf-8");
       const games = JSON.parse(data);
+      console.log(
+        "Successfully read games from file:",
+        p,
+        "->",
+        games.length,
+        "games"
+      );
 
       // Initialize memory store in production
       if (process.env.NODE_ENV === "production" && memoryStore === null) {
@@ -57,32 +101,14 @@ async function readGames() {
     }
   }
 
-  // Last resort: try dynamic import of the JSON (bundled by build)
-  try {
-    // relative import from this file to the data folder
-    // use a dynamic import so bundlers can include the asset
-    // @ts-ignore - Node supports JSON imports in newer versions/bundlers
-    const mod = await import("../../data/games.json", {
-      assert: { type: "json" },
-    });
-    const games = (mod && (mod.default || mod)) || [];
+  console.error("Error reading games file (all attempts failed)");
 
-    // Initialize memory store in production
-    if (process.env.NODE_ENV === "production" && memoryStore === null) {
-      memoryStore = [...games];
-    }
-
-    return games;
-  } catch (err) {
-    console.error("Error reading games file (all attempts failed):", err);
-
-    // Return empty array or memory store as fallback
-    if (process.env.NODE_ENV === "production" && memoryStore !== null) {
-      return memoryStore;
-    }
-
-    return [];
+  // Return empty array or memory store as last fallback
+  if (process.env.NODE_ENV === "production" && memoryStore !== null) {
+    return memoryStore;
   }
+
+  return [];
 }
 
 // Utility function to write games to file
@@ -119,14 +145,23 @@ export default defineEventHandler(async (event) => {
       const query = getQuery(event);
       const games = await readGames();
 
+      console.log("GET request - games loaded:", games.length, "total games");
+
       if (query.id) {
+        console.log("Looking for game with ID:", query.id);
         const game = games.find((g: any) => g.id === query.id);
         if (!game) {
+          console.error("Game not found with ID:", query.id);
+          console.log(
+            "Available game IDs:",
+            games.map((g: any) => g.id)
+          );
           throw createError({
             statusCode: 404,
             statusMessage: "Game not found",
           });
         }
+        console.log("Found game:", game.id, "->", game.names);
         return game;
       }
 
