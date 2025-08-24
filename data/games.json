@@ -37,11 +37,12 @@
     "updatedAt": "2025-01-17T00:00:00.000Z"
   },
   {
-    "id": "ZINGME",
-    "category": "Strategy",
+    "id": "LORDNINE",
+    "category": "RPG",
     "names": {
-      "en": "Zing Me Skibidi",
-      "ko": "나를 울리다"
+      "en": "LORDNINE",
+      "ko": "로드나인",
+      "ja": "ロードナイン"
     },
     "defaultLanguage": "en",
     "description": "",
