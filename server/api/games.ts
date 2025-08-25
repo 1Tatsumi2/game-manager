@@ -4,6 +4,8 @@ import { fileURLToPath } from "url";
 
 // In-memory store for production environment
 let memoryStore: any[] | null = null;
+// Track deleted games across instances
+let deletedGameIds: Set<string> = new Set();
 
 // Try several paths because Vercel / Nitro build output can change the runtime cwd
 const fallbackPaths = (() => {
@@ -42,83 +44,70 @@ async function readGames() {
     memoryStore?.length || 0
   );
 
-  // In production, use memory store if available (preserves CRUD operations)
-  if (process.env.NODE_ENV === "production" && memoryStore !== null) {
-    console.log("Using existing memory store:", memoryStore.length, "games");
-    return memoryStore;
-  }
-
-  // Try dynamic import of the bundled JSON (most reliable on Vercel)
+  // Always try to load bundled JSON first
+  let bundledGames: any[] = [];
   try {
     // @ts-ignore - Node supports JSON imports in newer versions/bundlers
     const mod = await import("../../data/games.json", {
       assert: { type: "json" },
     });
-    const gamesFromBundle = (mod && (mod.default || mod)) || [];
-
+    bundledGames = (mod && (mod.default || mod)) || [];
     console.log(
       "Successfully loaded games from bundled JSON:",
-      gamesFromBundle.length,
+      bundledGames.length,
       "games"
     );
-
-    // In production, initialize memory store with bundled data if not exists
-    if (process.env.NODE_ENV === "production") {
-      if (memoryStore === null) {
-        memoryStore = [...gamesFromBundle];
-        console.log("Initialized memory store from bundled JSON");
-      }
-      return memoryStore;
-    }
-
-    // In development, return bundled data directly
-    return gamesFromBundle;
   } catch (bundleErr) {
     console.error("Failed to import bundled JSON:", bundleErr);
   }
 
-  // Fallback: In production, use memory store if available
-  if (process.env.NODE_ENV === "production" && memoryStore !== null) {
-    console.log(
-      "Using existing memory store as fallback:",
-      memoryStore.length,
-      "games"
-    );
-    return memoryStore;
-  }
+  // In production, merge bundled data with memory store for consistency
+  if (process.env.NODE_ENV === "production") {
+    if (memoryStore !== null && memoryStore.length > 0) {
+      console.log("Merging memory store with bundled data for consistency");
 
-  // Try fs read on multiple candidate locations (development)
-  for (const p of fallbackPaths) {
-    try {
-      const data = await fs.readFile(p, "utf-8");
-      const games = JSON.parse(data);
+      // Create a map for efficient merging (memory store takes priority)
+      const gameMap = new Map();
+
+      // Add bundled games first (baseline)
+      bundledGames.forEach((game: any) => {
+        gameMap.set(game.id, game);
+      });
+
+      // Override/add games from memory store (latest changes)
+      memoryStore.forEach((game: any) => {
+        gameMap.set(game.id, game);
+      });
+
+      const mergedGames = Array.from(gameMap.values()).filter(
+        (game) => !deletedGameIds.has(game.id)
+      );
       console.log(
-        "Successfully read games from file:",
-        p,
-        "->",
-        games.length,
-        "games"
+        "Merged result:",
+        mergedGames.length,
+        "games (filtered deleted)"
       );
 
-      // Initialize memory store in production
-      if (process.env.NODE_ENV === "production" && memoryStore === null) {
-        memoryStore = [...games];
-      }
-
-      return games;
-    } catch (e) {
-      // ignore and try next
+      // Update memory store with merged data for future requests
+      memoryStore = mergedGames;
+      return mergedGames;
+    } else {
+      // Initialize memory store with bundled data (filter deleted)
+      const filteredGames = bundledGames.filter(
+        (game) => !deletedGameIds.has(game.id)
+      );
+      memoryStore = [...filteredGames];
+      console.log(
+        "Initialized memory store from bundled JSON (filtered):",
+        filteredGames.length,
+        "games"
+      );
+      return memoryStore;
     }
   }
 
-  console.error("Error reading games file (all attempts failed)");
-
-  // Return empty array or memory store as last fallback
-  if (process.env.NODE_ENV === "production" && memoryStore !== null) {
-    return memoryStore;
-  }
-
-  return [];
+  // In development, return bundled data directly
+  return bundledGames;
 }
 
 // Utility function to write games to file
@@ -329,6 +318,12 @@ export default defineEventHandler(async (event) => {
       if (body.ids && Array.isArray(body.ids)) {
         // Bulk delete
         console.log("DELETE - Bulk delete IDs:", body.ids);
+
+        // Track deleted games globally
+        body.ids.forEach((id: string) => {
+          deletedGameIds.add(id);
+        });
+
         const updatedGames = games.filter((g: any) => !body.ids.includes(g.id));
         await writeGames(updatedGames);
         console.log(
@@ -342,6 +337,10 @@ export default defineEventHandler(async (event) => {
       } else if (body.id) {
         // Single delete
         console.log("DELETE - Single delete ID:", body.id);
+
+        // Track deleted game globally
+        deletedGameIds.add(body.id);
+
         const updatedGames = games.filter((g: any) => g.id !== body.id);
         if (updatedGames.length === games.length) {
           console.error("DELETE - Game not found:", body.id);
