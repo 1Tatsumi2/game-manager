@@ -4,8 +4,6 @@ import { fileURLToPath } from "url";
 
 // In-memory store for production environment
 let memoryStore: any[] | null = null;
-// Track deleted games across instances
-let deletedGameIds: Set<string> = new Set();
 
 // Try several paths because Vercel / Nitro build output can change the runtime cwd
 const fallbackPaths = (() => {
@@ -61,49 +59,20 @@ async function readGames() {
     console.error("Failed to import bundled JSON:", bundleErr);
   }
 
-  // In production, merge bundled data with memory store for consistency
+  // In production, prioritize memory store if it has more recent data
   if (process.env.NODE_ENV === "production") {
     if (memoryStore !== null && memoryStore.length > 0) {
-      console.log("Merging memory store with bundled data for consistency");
-
-      // Create a map for efficient merging (memory store takes priority)
-      const gameMap = new Map();
-
-      // Add bundled games first (baseline)
-      bundledGames.forEach((game: any) => {
-        gameMap.set(game.id, game);
-      });
-
-      // Override/add games from memory store (latest changes)
-      memoryStore.forEach((game: any) => {
-        gameMap.set(game.id, game);
-      });
-
-      const mergedGames = Array.from(gameMap.values()).filter(
-        (game) => !deletedGameIds.has(game.id)
-      );
-      console.log(
-        "Merged result:",
-        mergedGames.length,
-        "games (filtered deleted)"
-      );
-
-      // Update memory store with merged data for future requests
-      memoryStore = mergedGames;
-      return mergedGames;
-    } else {
-      // Initialize memory store with bundled data (filter deleted)
-      const filteredGames = bundledGames.filter(
-        (game) => !deletedGameIds.has(game.id)
-      );
-      memoryStore = [...filteredGames];
-      console.log(
-        "Initialized memory store from bundled JSON (filtered):",
-        filteredGames.length,
-        "games"
-      );
+      console.log("Using memory store data:", memoryStore.length, "games");
       return memoryStore;
     }
+    console.log(
+      "Memory store empty, using bundled data:",
+      bundledGames.length,
+      "games"
+    );
+    // Initialize memory store with bundled data
+    memoryStore = bundledGames;
+    return bundledGames;
   }
 
   // In development, return bundled data directly
@@ -319,40 +288,34 @@ export default defineEventHandler(async (event) => {
         // Bulk delete
         console.log("DELETE - Bulk delete IDs:", body.ids);
 
-        // Track deleted games globally
-        body.ids.forEach((id: string) => {
-          deletedGameIds.add(id);
-        });
-
-        const updatedGames = games.filter((g: any) => !body.ids.includes(g.id));
-        await writeGames(updatedGames);
+        const filteredGames = games.filter(
+          (g: any) => !body.ids.includes(g.id)
+        );
+        await writeGames(filteredGames);
         console.log(
           "DELETE - Bulk delete completed, remaining games:",
-          updatedGames.map((g: any) => g.id)
+          filteredGames.map((g: any) => g.id)
         );
         return {
           success: true,
-          deletedCount: games.length - updatedGames.length,
+          deletedCount: games.length - filteredGames.length,
         };
       } else if (body.id) {
         // Single delete
         console.log("DELETE - Single delete ID:", body.id);
 
-        // Track deleted game globally
-        deletedGameIds.add(body.id);
-
-        const updatedGames = games.filter((g: any) => g.id !== body.id);
-        if (updatedGames.length === games.length) {
+        const filteredGames = games.filter((g: any) => g.id !== body.id);
+        if (filteredGames.length === games.length) {
           console.error("DELETE - Game not found:", body.id);
           throw createError({
             statusCode: 404,
             statusMessage: "Game not found",
           });
         }
-        await writeGames(updatedGames);
+        await writeGames(filteredGames);
         console.log(
           "DELETE - Single delete completed, remaining games:",
-          updatedGames.map((g: any) => g.id)
+          filteredGames.map((g: any) => g.id)
         );
         return { success: true, deletedCount: 1 };
       } else {
